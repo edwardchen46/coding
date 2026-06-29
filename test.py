@@ -25,5 +25,9 @@ period=int(input("請輸入期數"))
 result=base*(1+i)**period
 print(f'經過計算{period}你的本金和為{round(result,2)}')
 '''
-print(5>3)
-print(3>8)
+w=int(input("請輸入體重"))
+h=int(input("請輸入身高"))
+
+a=w/((h/100)**2)
+with open("bmi.txt",mode='a',encoding='utf-8') as f:
+    print(a,file=f)

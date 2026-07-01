@@ -76,7 +76,8 @@ else:
     # 比較兩個選擇並判斷獲勝者
     if user == com:
         print("平局！")
-    elif (user == 1 and com == 3) or (user == 2 and com == 1) or (user == 3 and com == 2):
+    elif (user-com)==1 or (user-com==-2):
+    #elif (user == 1 and com == 3) or (user == 2 and com == 1) or (user == 3 and com == 2):
         print("使用者獲勝！")
     else:
         print("電腦獲勝！")

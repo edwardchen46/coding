@@ -8,7 +8,8 @@ mail_sync_script.py
    並透過 Telegram Bot 推送摘要 + PDF 原檔
 
 依賴套件:
-    pip install pymupdf aiohttp
+    pip install pypdf pymupdf aiohttp
+    (pypdf: pdf/ 資料夾解密複製;pymupdf: 帳單文字抽取,未安裝時退回 pypdf 抽取)
 
 設定檔:
     ini/telegram_bot.ini (Bot Token 獨立存放):
@@ -34,6 +35,7 @@ import email
 import email.message
 import email.utils
 import imaplib
+import shutil
 import asyncio
 import logging
 import configparser
@@ -53,6 +55,12 @@ try:
 except ImportError:
     aiohttp = None
 
+try:
+    from pypdf import PdfReader, PdfWriter
+    _PYPDF_AVAILABLE = True
+except ImportError:
+    _PYPDF_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # 全域常數
 # ---------------------------------------------------------------------------
@@ -63,6 +71,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INI_DIR = os.path.join(BASE_DIR, "ini")
 DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
+PDF_DIR = os.path.join(BASE_DIR, "pdf")  # PDF 集中資料夾 (解密版/複本)
+ELECTRONIC_BILL_DIR = os.path.join(BASE_DIR, "electronic_bill")  # 電子帳單集中資料夾
 
 MAIL_INI_PATH = os.path.join(INI_DIR, "mail.ini")
 
@@ -108,6 +118,34 @@ TW_BANK_NAMES = (
     "王道", "凱基", "新光", "陽信", "合作金庫", "土地銀行", "郵局",
 )
 
+# --- 通用電子帳單 (電費/水費/電信/瓦斯/稅費...) 辨識常數 ---
+
+# 通用帳單關鍵字:命中 >= 2 個即視為電子帳單
+EBILL_KEYWORDS = (
+    "電子帳單", "繳費通知", "帳單金額", "應繳金額", "繳費期限",
+    "繳款期限", "本期應繳", "繳款截止", "繳費金額", "代收截止",
+)
+
+# 帳單類型判斷規則 (依序比對,先中先贏)
+EBILL_TYPE_RULES = (
+    ("信用卡", "信用卡帳單"),
+    ("台灣電力", "電費帳單"), ("電費", "電費帳單"),
+    ("自來水", "水費帳單"), ("水費", "水費帳單"),
+    ("天然氣", "瓦斯帳單"), ("瓦斯", "瓦斯帳單"),
+    ("中華電信", "電信帳單"), ("台灣大哥大", "電信帳單"),
+    ("遠傳", "電信帳單"), ("電信費", "電信帳單"),
+    ("健保", "健保費帳單"), ("國民年金", "國民年金帳單"),
+    ("燃料費", "汽機車燃料費"), ("牌照稅", "稅費帳單"),
+    ("房屋稅", "稅費帳單"), ("地價稅", "稅費帳單"), ("所得稅", "稅費帳單"),
+)
+
+# 常見發單機構 (供摘要顯示)
+EBILL_ISSUERS = (
+    "台灣電力", "台灣自來水", "臺北自來水", "中華電信", "台灣大哥大",
+    "遠傳電信", "遠傳", "大台北瓦斯", "欣欣天然氣", "欣中天然氣",
+    "衛生福利部中央健康保險署", "健保署", "財政部", "國稅局", "監理",
+)
+
 # 金額/日期擷取正則 (預先編譯,避免每封信重複編譯)
 _RE_AMOUNT_DUE = re.compile(
     r"(?:本期應繳(?:總?金額)?|應繳總?金額|本期應付(?:總?金額)?)"
@@ -128,16 +166,18 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 
 @dataclass
 class CardBill:
-    """單筆信用卡帳單辨識結果,供 Telegram 推送使用。"""
+    """單筆帳單辨識結果 (信用卡或通用電子帳單),供 Telegram 推送使用。"""
     pdf_path: str
     account: str                       # 收信帳號 (哪個信箱收到的)
+    bill_type: str = "信用卡帳單"      # 信用卡帳單 / 電費帳單 / 水費帳單 ...
     mail_subject: str = ""
     mail_from: str = ""
     bank: str = ""                     # 發卡行 (比對不到則空字串)
     amount_due: str = ""               # 本期應繳金額
     min_payment: str = ""              # 最低應繳金額
     due_date: str = ""                 # 繳款截止日
-    was_encrypted: bool = False        # 該 PDF 是否曾加密 (推送時提醒密碼)
+    was_encrypted: bool = False        # 原始 PDF 是否加密
+    is_decrypted_copy: bool = False    # 推送的檔案是否為已解密版本
     matched_keywords: list = field(default_factory=list)
 
 
@@ -294,9 +334,13 @@ def extract_pdf_text(pdf_path: str, passwords: tuple,
     回傳 (text, was_encrypted):
         text = None  -> 加密且所有密碼都失敗,或檔案損毀
         text = ""    -> 開啟成功但沒有文字層 (掃描圖片型 PDF)
+
+    優先用 PyMuPDF (中文抽取品質較佳);未安裝時退回 pypdf。
     """
     if fitz is None:
-        logger.warning("未安裝 PyMuPDF (pip install pymupdf),跳過 PDF 辨識。")
+        if _PYPDF_AVAILABLE:
+            return _extract_pdf_text_pypdf(pdf_path, passwords, logger)
+        logger.warning("未安裝 PyMuPDF 或 pypdf,無法抽取 PDF 文字,跳過辨識。")
         return None, False
 
     doc = None
@@ -330,6 +374,37 @@ def extract_pdf_text(pdf_path: str, passwords: tuple,
                 doc.close()
             except Exception:
                 pass
+
+
+def _extract_pdf_text_pypdf(pdf_path: str, passwords: tuple,
+                            logger: logging.Logger) -> tuple:
+    """pypdf 備援文字抽取:介面與 extract_pdf_text 相同。"""
+    try:
+        reader = PdfReader(pdf_path)
+        was_encrypted = bool(reader.is_encrypted)
+
+        if was_encrypted:
+            for pw in passwords:
+                try:
+                    if reader.decrypt(pw):
+                        break
+                except Exception:
+                    continue
+            else:
+                logger.warning("PDF 已加密且所有密碼皆失敗 (pypdf): %s",
+                               os.path.basename(pdf_path))
+                return None, True
+
+        # Generator 運算式逐頁抽取,只取前 N 頁避免整份載入
+        page_limit = min(len(reader.pages), PDF_SCAN_MAX_PAGES)
+        text = "\n".join(
+            (reader.pages[i].extract_text() or "") for i in range(page_limit)
+        )
+        return text, was_encrypted
+    except Exception as exc:
+        logger.error("解析 PDF %s 失敗 (pypdf): %s",
+                     os.path.basename(pdf_path), exc)
+        return None, False
 
 
 def analyze_credit_card_bill(text: str) -> Optional[dict]:
@@ -366,26 +441,79 @@ def analyze_credit_card_bill(text: str) -> Optional[dict]:
     }
 
 
+# 通用電子帳單的金額/期限正則 (涵蓋非信用卡帳單常見寫法)
+_RE_EBILL_AMOUNT = re.compile(
+    r"(?:應繳(?:總?金額)?|帳單金額|繳費金額|本期費用)[^\d\-]{0,25}?([\d,]{1,15})"
+)
+_RE_EBILL_DUE = re.compile(
+    r"(?:繳費期限|繳款期限|繳費截止|繳款截止日?|代收截止)"
+    r"[^\d]{0,15}?(\d{2,4}\s*[./年-]\s*\d{1,2}\s*[./月-]\s*\d{1,2}\s*日?)"
+)
+
+
+def analyze_electronic_bill(text: str) -> Optional[dict]:
+    """
+    通用電子帳單判斷 (電費/水費/電信/瓦斯/稅費...):
+    命中 EBILL_KEYWORDS >= 2 個即視為電子帳單,並嘗試判斷類型與擷取欄位。
+    信用卡帳單請先用 analyze_credit_card_bill() 判斷 (訊息格式較豐富),
+    此函式作為第二層的通用網。
+    """
+    if not text:
+        return None
+
+    keyword_hits = [kw for kw in EBILL_KEYWORDS if kw in text]
+    if len(keyword_hits) < 2:
+        return None
+
+    bill_type = next(
+        (label for kw, label in EBILL_TYPE_RULES if kw in text), "電子帳單")
+    issuer = next(
+        (name for name in EBILL_ISSUERS + TW_BANK_NAMES if name in text), "")
+
+    amount_match = _RE_EBILL_AMOUNT.search(text)
+    due_match = _RE_EBILL_DUE.search(text)
+
+    return {
+        "bill_type": bill_type,
+        "issuer": issuer,
+        "amount_due": amount_match.group(1) if amount_match else "",
+        "due_date": re.sub(r"\s+", "", due_match.group(1)) if due_match else "",
+        "matched_keywords": keyword_hits,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 【新增】Telegram 非同步推送
 # ---------------------------------------------------------------------------
 
 def _format_bill_message(bill: CardBill) -> str:
-    """組合 Telegram 推送文字 (HTML parse mode)。"""
-    lines = ["💳 <b>偵測到信用卡繳費帳單</b>", ""]
-    if bill.bank:
-        lines.append(f"🏦 發卡行:<b>{bill.bank}</b>")
-    if bill.amount_due:
-        lines.append(f"💰 本期應繳:<b>NT$ {bill.amount_due}</b>")
-    if bill.min_payment:
-        lines.append(f"🔻 最低應繳:NT$ {bill.min_payment}")
-    if bill.due_date:
-        lines.append(f"⏰ 繳款截止:<b>{bill.due_date}</b>")
+    """組合 Telegram 推送文字 (HTML parse mode);信用卡與通用電子帳單格式不同。"""
+    if bill.bill_type == "信用卡帳單":
+        lines = ["💳 <b>偵測到信用卡繳費帳單</b>", ""]
+        if bill.bank:
+            lines.append(f"🏦 發卡行:<b>{bill.bank}</b>")
+        if bill.amount_due:
+            lines.append(f"💰 本期應繳:<b>NT$ {bill.amount_due}</b>")
+        if bill.min_payment:
+            lines.append(f"🔻 最低應繳:NT$ {bill.min_payment}")
+        if bill.due_date:
+            lines.append(f"⏰ 繳款截止:<b>{bill.due_date}</b>")
+    else:
+        lines = ["📄 <b>偵測到電子帳單</b>", ""]
+        lines.append(f"🧾 類型:<b>{bill.bill_type}</b>")
+        if bill.bank:
+            lines.append(f"🏢 機構:{bill.bank}")
+        if bill.amount_due:
+            lines.append(f"💰 應繳金額:<b>NT$ {bill.amount_due}</b>")
+        if bill.due_date:
+            lines.append(f"⏰ 繳費期限:<b>{bill.due_date}</b>")
     lines.append("")
     lines.append(f"📧 收件信箱:{bill.account}")
     if bill.mail_subject:
         lines.append(f"✉️ 郵件主旨:{bill.mail_subject}")
-    if bill.was_encrypted:
+    if bill.was_encrypted and bill.is_decrypted_copy:
+        lines.append("🔓 原始 PDF 有密碼,附上的是已解密版本,直接開啟即可")
+    elif bill.was_encrypted:
         lines.append("🔒 PDF 有密碼保護,開啟附件請輸入你的帳單密碼")
     return "\n".join(lines)
 
@@ -461,9 +589,11 @@ class EmailDownloader:
         self.logger = logger
         self.config = configparser.ConfigParser()
 
-        # 確保基礎資料夾存在 (ini/ downloads/ 皆鎖定在程式檔案旁)
+        # 確保基礎資料夾存在 (ini/ downloads/ pdf/ 皆鎖定在程式檔案旁)
         os.makedirs(INI_DIR, exist_ok=True)
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+        os.makedirs(PDF_DIR, exist_ok=True)
+        os.makedirs(ELECTRONIC_BILL_DIR, exist_ok=True)
 
         self._load_config()
 
@@ -847,23 +977,140 @@ class EmailDownloader:
                 )
                 continue
 
-            # --- 【新增】PDF 附件 -> 信用卡帳單辨識 ---
+            # --- PDF 附件:複製/解密到 pdf/ -> 信用卡帳單辨識 ---
             if safe_ext.lower() == ".pdf":
-                self._inspect_pdf_attachment(attachment_path, username,
-                                             subject, from_addr)
+                dest_path, was_enc, decrypted = self._handle_pdf_attachment(
+                    attachment_path, username, uid_str)
+                # 優先辨識 pdf/ 裡的版本 (已解密,抽文字不需再過密碼);
+                # 複製/解密失敗時退回辨識 downloads/ 原檔
+                inspect_path = dest_path if dest_path else attachment_path
+                self._inspect_pdf_attachment(
+                    inspect_path, username, subject, from_addr,
+                    original_encrypted=was_enc,
+                    is_decrypted_copy=decrypted,
+                )
 
     # ------------------------------------------------------------------
-    # 【新增】PDF 附件辨識:解密 -> 抽文字 -> 判斷 -> 收集待推送
+    # 【原有功能】PDF 複製/解密到 pdf/ 資料夾
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _resolve_name_collision(dest_dir: str, filename: str) -> str:
+        """pdf/ 內若已有同名檔案,自動加上 _1, _2 ... 序號避免覆蓋。"""
+        candidate = os.path.join(dest_dir, filename)
+        if not os.path.exists(candidate):
+            return candidate
+        name_root, ext = os.path.splitext(filename)
+        index = 1
+        while True:
+            candidate = os.path.join(dest_dir, f"{name_root}_{index}{ext}")
+            if not os.path.exists(candidate):
+                return candidate
+            index += 1
+
+    def _handle_pdf_attachment(self, attachment_path: str, username: str,
+                               uid_str: str) -> tuple:
+        """
+        偵測 PDF 是否加密:
+            - 未加密:直接複製一份到 pdf/ (copy2 保留時間戳,downloads/ 原檔不動)。
+            - 已加密:逐一嘗試 ini/passwd.txt 中的密碼,成功後將「解密版」寫入 pdf/。
+            - 全部密碼失敗或 pypdf 未安裝:記錄 log,不中斷收信主流程。
+
+        回傳 (pdf/ 中的檔案路徑或 None, 原檔是否加密 Optional[bool], 是否為解密版 bool)
+        """
+        filename = os.path.basename(attachment_path)
+
+        if not _PYPDF_AVAILABLE:
+            self.logger.warning(
+                "[%s] UID=%s 偵測到 PDF 附件 %s,但未安裝 pypdf,"
+                "無法判斷加密狀態,僅複製原檔至 pdf/。(pip install pypdf)",
+                username, uid_str, filename,
+            )
+            try:
+                dest_path = self._resolve_name_collision(PDF_DIR, filename)
+                shutil.copy2(attachment_path, dest_path)
+                return dest_path, None, False
+            except Exception as exc:
+                self.logger.error("[%s] UID=%s 複製 PDF %s 失敗: %s",
+                                  username, uid_str, filename, exc)
+                return None, None, False
+
+        try:
+            reader = PdfReader(attachment_path)
+        except Exception as exc:
+            self.logger.error("[%s] UID=%s 開啟 PDF %s 失敗 (檔案可能損毀): %s",
+                              username, uid_str, filename, exc)
+            return None, None, False
+
+        # --- 未加密:直接複製 ---
+        if not reader.is_encrypted:
+            dest_path = self._resolve_name_collision(PDF_DIR, filename)
+            try:
+                shutil.copy2(attachment_path, dest_path)
+                self.logger.info("[%s] UID=%s PDF 未加密,已複製至: %s",
+                                 username, uid_str, dest_path)
+                return dest_path, False, False
+            except Exception as exc:
+                self.logger.error("[%s] UID=%s 複製 PDF %s 失敗: %s",
+                                  username, uid_str, filename, exc)
+                return None, False, False
+
+        # --- 已加密:逐一嘗試密碼 ---
+        passwords = self.pdf_passwords
+        if not passwords:
+            self.logger.error(
+                "[%s] UID=%s PDF %s 已加密,但 %s 無可用密碼,跳過。",
+                username, uid_str, filename, PASSWD_TXT_PATH,
+            )
+            return None, True, False
+
+        for password in passwords:
+            try:
+                # decrypt() 回傳值 > 0 (非 NOT_DECRYPTED) 代表密碼正確
+                if reader.decrypt(password):
+                    writer = PdfWriter()
+                    for page in reader.pages:
+                        writer.add_page(page)
+                    dest_path = self._resolve_name_collision(PDF_DIR, filename)
+                    with open(dest_path, "wb") as f:
+                        writer.write(f)
+                    self.logger.info(
+                        "[%s] UID=%s PDF %s 解密成功,已存至: %s",
+                        username, uid_str, filename, dest_path,
+                    )
+                    return dest_path, True, True
+            except Exception as exc:
+                # 個別密碼嘗試失敗 (含 AES 需 cryptography 套件等情況) 續試下一組
+                self.logger.debug(
+                    "[%s] UID=%s PDF %s 以某組密碼解密時發生例外: %s",
+                    username, uid_str, filename, exc,
+                )
+                continue
+
+        self.logger.error(
+            "[%s] UID=%s PDF %s 已加密,%d 組密碼皆無法解密,跳過。",
+            username, uid_str, filename, len(passwords),
+        )
+        return None, True, False
+
+    # ------------------------------------------------------------------
+    # 【新增】PDF 附件辨識:抽文字 -> 判斷 -> 收集待推送
     # ------------------------------------------------------------------
     def _inspect_pdf_attachment(self, pdf_path: str, username: str,
-                                subject: str, from_addr: str) -> None:
+                                subject: str, from_addr: str,
+                                original_encrypted: Optional[bool] = None,
+                                is_decrypted_copy: bool = False) -> None:
         """
         辨識失敗絕不拋出例外:帳單辨識屬於加值功能,
         任何錯誤只記 log,不能影響收信主流程與 UID 追蹤。
         """
         try:
-            text, was_encrypted = extract_pdf_text(
+            text, extract_encrypted = extract_pdf_text(
                 pdf_path, self.pdf_passwords, self.logger)
+
+            # 原始加密狀態:優先採用 _handle_pdf_attachment 的判斷結果
+            was_encrypted = (original_encrypted
+                             if original_encrypted is not None
+                             else extract_encrypted)
 
             if text is None:
                 return  # 解密失敗或檔案損毀,extract_pdf_text 已記 log
@@ -875,31 +1122,70 @@ class EmailDownloader:
                                  os.path.basename(pdf_path))
                 return
 
-            result = analyze_credit_card_bill(text)
-            if result is None:
-                return
+            # --- 第一層:信用卡帳單 (訊息格式最豐富) ---
+            cc_result = analyze_credit_card_bill(text)
+            if cc_result is not None:
+                bill = CardBill(
+                    pdf_path=pdf_path,
+                    account=username,
+                    bill_type="信用卡帳單",
+                    mail_subject=subject,
+                    mail_from=from_addr,
+                    bank=cc_result["bank"],
+                    amount_due=cc_result["amount_due"],
+                    min_payment=cc_result["min_payment"],
+                    due_date=cc_result["due_date"],
+                    was_encrypted=bool(was_encrypted),
+                    is_decrypted_copy=is_decrypted_copy,
+                    matched_keywords=cc_result["matched_keywords"],
+                )
+            else:
+                # --- 第二層:通用電子帳單 (電費/水費/電信/瓦斯/稅費...) ---
+                eb_result = analyze_electronic_bill(text)
+                if eb_result is None:
+                    return
+                bill = CardBill(
+                    pdf_path=pdf_path,
+                    account=username,
+                    bill_type=eb_result["bill_type"],
+                    mail_subject=subject,
+                    mail_from=from_addr,
+                    bank=eb_result["issuer"],
+                    amount_due=eb_result["amount_due"],
+                    due_date=eb_result["due_date"],
+                    was_encrypted=bool(was_encrypted),
+                    is_decrypted_copy=is_decrypted_copy,
+                    matched_keywords=eb_result["matched_keywords"],
+                )
 
-            bill = CardBill(
-                pdf_path=pdf_path,
-                account=username,
-                mail_subject=subject,
-                mail_from=from_addr,
-                bank=result["bank"],
-                amount_due=result["amount_due"],
-                min_payment=result["min_payment"],
-                due_date=result["due_date"],
-                was_encrypted=was_encrypted,
-                matched_keywords=result["matched_keywords"],
-            )
+            # --- 是帳單:另外複製一份到 electronic_bill/,並以該複本推送 ---
+            bill.pdf_path = self._archive_electronic_bill(pdf_path)
             self.pending_bills.append(bill)
             self.logger.info(
-                "偵測到信用卡帳單: %s (銀行=%s 應繳=%s 截止=%s)",
-                os.path.basename(pdf_path),
+                "偵測到%s: %s (機構=%s 應繳=%s 截止=%s)",
+                bill.bill_type, os.path.basename(pdf_path),
                 bill.bank or "?", bill.amount_due or "?", bill.due_date or "?",
             )
         except Exception as exc:
             self.logger.exception("PDF 帳單辨識流程例外 (%s): %s",
                                   os.path.basename(pdf_path), exc)
+
+    def _archive_electronic_bill(self, pdf_path: str) -> str:
+        """
+        將判定為帳單的 PDF 另外複製一份到 electronic_bill/。
+        回傳 electronic_bill/ 中的複本路徑 (供 Telegram 推送);
+        複製失敗時回傳原路徑,確保推送不受影響。
+        """
+        try:
+            dest_path = self._resolve_name_collision(
+                ELECTRONIC_BILL_DIR, os.path.basename(pdf_path))
+            shutil.copy2(pdf_path, dest_path)
+            self.logger.info("帳單已歸檔至: %s", dest_path)
+            return dest_path
+        except Exception as exc:
+            self.logger.error("複製帳單到 electronic_bill/ 失敗 (%s): %s",
+                              os.path.basename(pdf_path), exc)
+            return pdf_path
 
 
 # ---------------------------------------------------------------------------

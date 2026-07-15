@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Brew & Bean{% endblock %} | 咖啡廳</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container nav-container">
+            <a href="/" class="logo">
+                <span class="logo-icon">☕</span>
+                <span class="logo-text">Brew & Bean</span>
+            </a>
+            <button class="nav-toggle" aria-label="開啟選單">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}">首頁</a></li>
+                <li><a href="/menu" class="{% if request.url.path == '/menu' %}active{% endif %}">菜單</a></li>
+                <li><a href="/about" class="{% if request.url.path == '/about' %}active{% endif %}">關於我們</a></li>
+                <li><a href="/contact" class="{% if request.url.path == '/contact' %}active{% endif %}">預約聯絡</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <div class="container footer-grid">
+            <div class="footer-brand">
+                <h3>Brew & Bean</h3>
+                <p>每一杯，都是用心沖煮的故事</p>
+                <!-- <img src="../static/img/dog.avif" alt="Brew & Bean Logo"> -->
+            </div>
+            <div class="footer-info">
+                <h4>營業資訊</h4>
+                <p>週一至週日 08:00 – 21:00</p>
+                <p>台北市大安區咖啡路 88 號</p>
+            </div>
+            <div class="footer-contact">
+                <h4>聯絡我們</h4>
+                <p>02-1234-5678</p>
+                <p>hello@brewandbean.tw</p>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 Brew & Bean. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}預約聯絡{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="container">
+        <span class="section-tag">Contact</span>
+        <h1>預約聯絡</h1>
+        <p>歡迎預約座位或留下您的寶貴意見</p>
+    </div>
+</section>
+
+<section class="section contact-section">
+    <div class="container contact-grid">
+        <div class="contact-info">
+            <h2>來訪資訊</h2>
+            <div class="info-item">
+                <span class="info-icon">📍</span>
+                <div>
+                    <h4>地址</h4>
+                    <p>台北市大安區咖啡路 88 號</p>
+                </div>
+            </div>
+            <div class="info-item">
+                <span class="info-icon">🕐</span>
+                <div>
+                    <h4>營業時間</h4>
+                    <p>週一至週日 08:00 – 21:00</p>
+                </div>
+            </div>
+            <div class="info-item">
+                <span class="info-icon">📞</span>
+                <div>
+                    <h4>電話</h4>
+                    <p>02-1234-5678</p>
+                </div>
+            </div>
+            <div class="info-item">
+                <span class="info-icon">✉️</span>
+                <div>
+                    <h4>Email</h4>
+                    <p>hello@brewandbean.tw</p>
+                </div>
+            </div>
+            <div class="map-placeholder">
+                <span>🗺️</span>
+                <p>大安區 · 近捷運站</p>
+            </div>
+        </div>
+
+        <div class="contact-form-wrapper">
+            {% if success %}
+            <div class="success-message">
+                <span>✅</span>
+                <h3>預約成功！</h3>
+                <p>感謝您的預約，我們會盡快與您聯繫確認。</p>
+            </div>
+            {% endif %}
+
+            <form class="contact-form" method="post" action="/contact">
+                <h2>線上預約</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="name">姓名</label>
+                        <input type="text" id="name" name="name" required placeholder="請輸入您的姓名">
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" required placeholder="your@email.com">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="date">預約日期</label>
+                        <input type="date" id="date" name="date" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="time">預約時間</label>
+                        <select id="time" name="time" required>
+                            <option value="">請選擇時間</option>
+                            <option value="09:00">09:00</option>
+                            <option value="10:00">10:00</option>
+                            <option value="11:00">11:00</option>
+                            <option value="12:00">12:00</option>
+                            <option value="13:00">13:00</option>
+                            <option value="14:00">14:00</option>
+                            <option value="15:00">15:00</option>
+                            <option value="16:00">16:00</option>
+                            <option value="17:00">17:00</option>
+                            <option value="18:00">18:00</option>
+                            <option value="19:00">19:00</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="guests">人數</label>
+                    <input type="number" id="guests" name="guests" min="1" max="20" value="2" required>
+                </div>
+                <div class="form-group">
+                    <label for="message">備註</label>
+                    <textarea id="message" name="message" rows="4" placeholder="有任何特殊需求請在此留言..."></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary btn-full">送出預約</button>
+            </form>
+        </div>
+    </div>
+</section>
+{% endblock %}

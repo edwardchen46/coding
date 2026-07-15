@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}心靈咖啡館{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="hero-overlay"></div>
+    <div class="container hero-content">
+        <span class="hero-tag">Est. 2020</span>
+        <h1>品味生活，<br>從一杯好咖啡開始</h1>
+        <p>嚴選全球產地咖啡豆，由專業咖啡師手工沖煮，帶給您最純粹的咖啡體驗。</p>
+        <div class="hero-actions">
+            <a href="/menu" class="btn btn-primary">查看菜單</a>
+            <a href="/contact" class="btn btn-outline">預約座位</a>
+        </div>
+    </div>
+</section>
+
+<section class="section features">
+    <div class="container">
+        <div class="section-header">
+            <span class="section-tag">Why Us</span>
+            <h2>為什麼選擇我們</h2>
+        </div>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🌱</div>
+                <h3>產地直送</h3>
+                <p>與全球小農合作，確保每一顆咖啡豆的新鮮與品質。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">👨‍🍳</div>
+                <h3>專業沖煮</h3>
+                <p>SCA 認證咖啡師團隊，為您呈現最完美的風味。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🏠</div>
+                <h3>溫馨空間</h3>
+                <p>舒適的閱讀角落與寬敞座位，是您放鬆的最佳去處。</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="section featured-menu">
+    <div class="container">
+        <div class="section-header">
+            <span class="section-tag">Menu</span>
+            <h2>人氣推薦</h2>
+        </div>
+        <div class="menu-grid">
+            {% for item in featured_items %}
+            <div class="menu-card">
+                {% if item.badge %}
+                <span class="menu-badge">{{ item.badge }}</span>
+                {% endif %}
+                <div class="menu-card-icon">
+                    {% if item.category == '咖啡' %}☕
+                    {% elif item.category == '特調' %}🍹
+                    {% else %}🍰
+                    {% endif %}
+                </div>
+                <h3>{{ item.name }}</h3>
+                <p>{{ item.description }}</p>
+                <div class="menu-card-footer">
+                    <span class="price">NT$ {{ item.price }}</span>
+                    <span class="category-tag">{{ item.category }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="section-cta">
+            <a href="/menu" class="btn btn-primary">查看完整菜單</a>
+        </div>
+    </div>
+</section>
+
+<section class="section cta-banner">
+    <div class="container cta-content">
+        <h2>準備好來一杯了嗎？</h2>
+        <p>立即預約您的專屬座位，享受悠閒的咖啡時光。</p>
+        <a href="/contact" class="btn btn-light">立即預約</a>
+    </div>
+</section>
+{% endblock %}

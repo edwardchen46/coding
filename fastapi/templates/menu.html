@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}菜單{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="container">
+        <span class="section-tag">Menu</span>
+        <h1>我們的菜單</h1>
+        <p>精選咖啡、特調飲品與手工甜點，滿足您的味蕾</p>
+    </div>
+</section>
+
+<section class="section menu-section">
+    <div class="container">
+        <div class="category-filter">
+            {% for cat in categories %}
+            <a href="/menu?category={{ cat }}"
+               class="filter-btn {% if active_category == cat %}active{% endif %}">
+                {{ cat }}
+            </a>
+            {% endfor %}
+        </div>
+
+        <div class="menu-grid menu-grid-full">
+            {% for item in menu_items %}
+            <div class="menu-card">
+                {% if item.badge %}
+                <span class="menu-badge">{{ item.badge }}</span>
+                {% endif %}
+                <div class="menu-card-icon">
+                    {% if item.category == '咖啡' %}☕
+                    {% elif item.category == '特調' %}🍹
+                    {% else %}🍰
+                    {% endif %}
+                </div>
+                <h3>{{ item.name }}</h3>
+                <p>{{ item.description }}</p>
+                <div class="menu-card-footer">
+                    <span class="price">NT$ {{ item.price }}</span>
+                    <span class="category-tag">{{ item.category }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endblock %}
